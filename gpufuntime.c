@@ -1,5 +1,6 @@
 #include "SDL3/SDL_gpu.h"
 #include "SDL3/SDL_init.h"
+#include "SDL3/SDL_stdinc.h"
 #define SDL_MAIN_USE_CALLBACKS
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL.h>
@@ -70,17 +71,10 @@ static bool create_transfer_buffer(void)
 
 static void update_transfer_buffer(void)
 {
-	// map the transfer buffer to a pointer
 	struct Vertex* data = (struct Vertex*)SDL_MapGPUTransferBuffer(device, transferBuffer, false);
 
-	data[0] = vertices[0];
-	data[1] = vertices[1];
-	data[2] = vertices[2];
+	SDL_memcpy(data, vertices, sizeof(vertices));
 
-	// or you can copy them all in one operation
-	// SDL_memcpy(data, vertices, sizeof(vertices));
-
-	// unmap the pointer when you are done updating the transfer buffer
 	SDL_UnmapGPUTransferBuffer(device, transferBuffer);
 }
 
@@ -196,17 +190,21 @@ static bool create_pipeline(void)
 	pipelineInfo.vertex_input_state.vertex_attributes = vertexAttributes;
 
 	// describe the color target
-	SDL_GPUColorTargetDescription colorTargetDescriptions[1] = {};
-	colorTargetDescriptions[0].blend_state.enable_blend = true;
-	colorTargetDescriptions[0].blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
-	colorTargetDescriptions[0].blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
-	colorTargetDescriptions[0].blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
-	colorTargetDescriptions[0].blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
-	colorTargetDescriptions[0].blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
-	colorTargetDescriptions[0].blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
-	colorTargetDescriptions[0].format = SDL_GetGPUSwapchainTextureFormat(device, window);
+	SDL_GPUColorTargetDescription colorTargetDescriptions[] = {
+		{
+			.blend_state.enable_blend = true,
+			.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD,
+			.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD,
+			.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+			.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+			.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+			.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+			.format = SDL_GetGPUSwapchainTextureFormat(device, window),
+		},
+	};
 
-	pipelineInfo.target_info.num_color_targets = 1;
+
+	pipelineInfo.target_info.num_color_targets = SDL_arraysize(colorTargetDescriptions);
 	pipelineInfo.target_info.color_target_descriptions = colorTargetDescriptions;
 
 	// create the pipeline
@@ -236,7 +234,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	update_transfer_buffer();
 	upload_vertex_buffer();
 
-if (!load_vertex_shader())
+	if (!load_vertex_shader())
 		return SDL_APP_FAILURE;
 
 	if (!load_fragment_shader())
@@ -281,11 +279,14 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	SDL_BindGPUGraphicsPipeline(renderPass, graphicsPipeline);
 
 	// bind the vertex buffer
-	SDL_GPUBufferBinding bufferBindings[1] = {};
-	bufferBindings[0].buffer = vertexBuffer;
-	bufferBindings[0].offset = 0;
+	SDL_GPUBufferBinding bufferBindings[] = {
+		{
+			.buffer = vertexBuffer,
+			.offset = 0,
+		},
+	};
 
-	SDL_BindGPUVertexBuffers(renderPass, 0, bufferBindings, 1);
+	SDL_BindGPUVertexBuffers(renderPass, 0, bufferBindings, SDL_arraysize(bufferBindings));
 
 	mat4 model;
 	glm_mat4_identity(model);
