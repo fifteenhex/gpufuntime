@@ -17,9 +17,9 @@ struct Vertex
 struct UniformBufferObject
 {
 	mat4 model;
+	mat4 projection;
+	mat4 view;
 };
-
-static vec3 CamPos = { 0, 0, 4 };
 
 // a list of vertices
 static struct Vertex vertices[] =
@@ -31,12 +31,12 @@ static struct Vertex vertices[] =
 	},
 	// bottom left vertex
 	{
-		{-0.5f, -0.5f, 0.0f},
+		{-0.75f, -0.5f, 0.0f},
 		{1.0f, 1.0f, 0.0f, 1.0f}
 	},
 	// bottom right vertex
 	{
-		{0.5f, -0.5f, 0.0f},
+		{0.75f, -0.5f, 0.0f},
 		{1.0f, 0.0f, 1.0f, 1.0f},
 	}
 };
@@ -111,24 +111,26 @@ static void upload_vertex_buffer(void)
 
 static bool load_vertex_shader(void)
 {
-	// load the vertex shader code
 	size_t vertexCodeSize;
+
 	void* vertexCode = SDL_LoadFile("vertex.spv", &vertexCodeSize);
+	if (!vertexCode)
+		return false;
 
 	// create the vertex shader
-	SDL_GPUShaderCreateInfo vertexInfo = {};
-	vertexInfo.code = (Uint8*)vertexCode; //convert to an array of bytes
-	vertexInfo.code_size = vertexCodeSize;
-	vertexInfo.entrypoint = "main";
-	vertexInfo.format = SDL_GPU_SHADERFORMAT_SPIRV; // loading .spv shaders
-	vertexInfo.stage = SDL_GPU_SHADERSTAGE_VERTEX; // vertex shader
-	vertexInfo.num_samplers = 0;
-	vertexInfo.num_storage_buffers = 0;
-	vertexInfo.num_storage_textures = 0;
-	vertexInfo.num_uniform_buffers = 1;
+	SDL_GPUShaderCreateInfo vertexInfo = {
+		.code = (Uint8*)vertexCode,
+		.code_size = vertexCodeSize,
+		.entrypoint = "main",
+		.format = SDL_GPU_SHADERFORMAT_SPIRV,
+		.stage = SDL_GPU_SHADERSTAGE_VERTEX,
+		.num_samplers = 0,
+		.num_storage_buffers = 0,
+		.num_storage_textures = 0,
+		.num_uniform_buffers = 1,
+	};
 	vertexShader = SDL_CreateGPUShader(device, &vertexInfo);
 
-	// free the file
 	SDL_free(vertexCode);
 
 	return true;
@@ -138,7 +140,10 @@ static bool load_fragment_shader(void)
 {
 	// create the fragment shader
 	size_t fragmentCodeSize;
+
 	void* fragmentCode = SDL_LoadFile("fragment.spv", &fragmentCodeSize);
+	if (!fragmentCode)
+		return false;
 
 	// create the fragment shader
 	SDL_GPUShaderCreateInfo fragmentInfo = {
@@ -146,7 +151,7 @@ static bool load_fragment_shader(void)
 		.code_size = fragmentCodeSize,
 		.entrypoint = "main",
 		.format = SDL_GPU_SHADERFORMAT_SPIRV,
-		.stage = SDL_GPU_SHADERSTAGE_FRAGMENT, // fragment shader
+		.stage = SDL_GPU_SHADERSTAGE_FRAGMENT,
 		.num_samplers = 0,
 		.num_storage_buffers = 0,
 		.num_storage_textures = 0,
@@ -155,7 +160,6 @@ static bool load_fragment_shader(void)
 
 	fragmentShader = SDL_CreateGPUShader(device, &fragmentInfo);
 
-	// free the file
 	SDL_free(fragmentCode);
 	return true;
 }
@@ -228,7 +232,7 @@ static bool create_pipeline(void)
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
-	window = SDL_CreateWindow("Hello, Triangle!", 640, 480, SDL_WINDOW_RESIZABLE);
+	window = SDL_CreateWindow("Hello, Triangle!", 480, 480, SDL_WINDOW_RESIZABLE);
 	if (!window)
 		return SDL_APP_FAILURE;
 
@@ -244,6 +248,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
 	if (!create_transfer_buffer())
 		return SDL_APP_FAILURE;
+
 	update_transfer_buffer();
 	upload_vertex_buffer();
 
@@ -259,6 +264,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	return SDL_APP_CONTINUE;
 }
 
+
+int rot = 0;
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
 	SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
@@ -298,12 +305,16 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	SDL_BindGPUVertexBuffers(renderPass, 0, bufferBindings, SDL_arraysize(bufferBindings));
 
 	struct UniformBufferObject ubo = {};
-	glm_scale_make(ubo.model, (vec3){0.75f, 0.75f, 0.75f});
+	//glm_scale_make(ubo.model, (vec3){1.00f, 1.00f, 1.00f});
+	//glm_rotate_x(tmp, 45, ubo.model);
+	rot = (rot + 1) %360;
+	glm_rotate_atm(ubo.model, (vec3) {0.0f,0.0f,0.0f}, glm_rad(rot), (vec3) {1.0f,0.0f,0.0f});
 
-	//mat4 perspective, view, persview;
-	//glm_perspective_default(640.0f/480.0f, perspective);
-	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, view);
-	//glm_mat4_mul(perspective, view, persview);
+	//glm_mat4_mul(scale, rot, ubo.model);
+
+	glm_ortho_default(480.0f/480.0f, ubo.projection);
+	//glm_perspective_default(, ubo.perspective);
+	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, ubo.view);
 
 	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 
