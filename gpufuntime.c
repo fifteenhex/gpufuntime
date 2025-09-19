@@ -14,6 +14,11 @@ struct Vertex
 	vec4 rgba;
 } __attribute((packed));
 
+struct UniformBufferObject
+{
+	mat4 model;
+};
+
 static vec3 CamPos = { 0, 0, 4 };
 
 // a list of vertices
@@ -21,12 +26,12 @@ static struct Vertex vertices[] =
 {
 	// top vertex
 	{
-		{0.0f, 0.5f, .4f},
+		{0.0f, 0.5f, 0.0f},
 		{1.0f, 0.0f, 0.0f, 1.0f},
 	},
 	// bottom left vertex
 	{
-		{-0.5f, -0.5f, 0.4f},
+		{-0.5f, -0.5f, 0.0f},
 		{1.0f, 1.0f, 0.0f, 1.0f}
 	},
 	// bottom right vertex
@@ -90,10 +95,11 @@ static void upload_vertex_buffer(void)
 	location.offset = 0; // start from the beginning
 
 	// where to upload the data
-	SDL_GPUBufferRegion region = {};
-	region.buffer = vertexBuffer;
-	region.size = sizeof(vertices); // size of the data in bytes
-	region.offset = 0; // begin writing from the first vertex
+	SDL_GPUBufferRegion region = {
+		.buffer = vertexBuffer,
+		.size = sizeof(vertices),
+		.offset = 0,
+	};
 
 	// upload the data
 	SDL_UploadToGPUBuffer(copyPass, &location, &region, true);
@@ -119,7 +125,7 @@ static bool load_vertex_shader(void)
 	vertexInfo.num_samplers = 0;
 	vertexInfo.num_storage_buffers = 0;
 	vertexInfo.num_storage_textures = 0;
-	vertexInfo.num_uniform_buffers = 0;
+	vertexInfo.num_uniform_buffers = 1;
 	vertexShader = SDL_CreateGPUShader(device, &vertexInfo);
 
 	// free the file
@@ -135,16 +141,17 @@ static bool load_fragment_shader(void)
 	void* fragmentCode = SDL_LoadFile("fragment.spv", &fragmentCodeSize);
 
 	// create the fragment shader
-	SDL_GPUShaderCreateInfo fragmentInfo = {};
-	fragmentInfo.code = (Uint8*)fragmentCode;
-	fragmentInfo.code_size = fragmentCodeSize;
-	fragmentInfo.entrypoint = "main";
-	fragmentInfo.format = SDL_GPU_SHADERFORMAT_SPIRV;
-	fragmentInfo.stage = SDL_GPU_SHADERSTAGE_FRAGMENT; // fragment shader
-	fragmentInfo.num_samplers = 0;
-	fragmentInfo.num_storage_buffers = 0;
-	fragmentInfo.num_storage_textures = 0;
-	fragmentInfo.num_uniform_buffers = 0;
+	SDL_GPUShaderCreateInfo fragmentInfo = {
+		.code = (Uint8*)fragmentCode,
+		.code_size = fragmentCodeSize,
+		.entrypoint = "main",
+		.format = SDL_GPU_SHADERFORMAT_SPIRV,
+		.stage = SDL_GPU_SHADERSTAGE_FRAGMENT, // fragment shader
+		.num_samplers = 0,
+		.num_storage_buffers = 0,
+		.num_storage_textures = 0,
+		.num_uniform_buffers = 0,
+	};
 
 	fragmentShader = SDL_CreateGPUShader(device, &fragmentInfo);
 
@@ -162,31 +169,37 @@ static bool create_pipeline(void)
 	pipelineInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 
 	// describe the vertex buffers
-	SDL_GPUVertexBufferDescription vertexBufferDesctiptions[1];
-	vertexBufferDesctiptions[0].slot = 0;
-	vertexBufferDesctiptions[0].input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-	vertexBufferDesctiptions[0].instance_step_rate = 0;
-	vertexBufferDesctiptions[0].pitch = sizeof(struct Vertex);
+	SDL_GPUVertexBufferDescription vertexBufferDesctiptions[] =
+	{
+		{
+			.slot = 0,
+			.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
+			.instance_step_rate = 0,
+			.pitch = sizeof(struct Vertex),
+		}
+	};
 
-	pipelineInfo.vertex_input_state.num_vertex_buffers = 1;
+	pipelineInfo.vertex_input_state.num_vertex_buffers = SDL_arraysize(vertexBufferDesctiptions);
 	pipelineInfo.vertex_input_state.vertex_buffer_descriptions = vertexBufferDesctiptions;
 
 	// describe the vertex attribute
-	SDL_GPUVertexAttribute vertexAttributes[2];
-
-	// a_position
-	vertexAttributes[0].buffer_slot = 0;
-	vertexAttributes[0].location = 0;
-	vertexAttributes[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
-	vertexAttributes[0].offset = 0;
-
-	// a_color
-	vertexAttributes[1].buffer_slot = 0;
-	vertexAttributes[1].location = 1;
-	vertexAttributes[1].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4;
-	vertexAttributes[1].offset = sizeof(float) * 3;
-
-	pipelineInfo.vertex_input_state.num_vertex_attributes = 2;
+	SDL_GPUVertexAttribute vertexAttributes[] = {
+		// a_position
+		{
+			.buffer_slot = 0,
+			.location = 0,
+			.format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+			.offset = 0,
+		},
+		// a_color
+		{
+			.buffer_slot = 0,
+			.location = 1,
+			.format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
+			.offset = sizeof(float) * 3,
+		},
+	};
+	pipelineInfo.vertex_input_state.num_vertex_attributes = SDL_arraysize(vertexAttributes);
 	pipelineInfo.vertex_input_state.vertex_attributes = vertexAttributes;
 
 	// describe the color target
@@ -249,9 +262,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
 	SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
-
 	SDL_GPUTexture* swapchainTexture;
 	Uint32 width, height;
+
 	SDL_WaitAndAcquireGPUSwapchainTexture(commandBuffer, window, &swapchainTexture, &width, &height);
 
 	if (swapchainTexture == NULL)
@@ -274,36 +287,28 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	};
 
 	SDL_GPURenderPass* renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, NULL);
-
-	// bind the pipeline
 	SDL_BindGPUGraphicsPipeline(renderPass, graphicsPipeline);
 
-	// bind the vertex buffer
 	SDL_GPUBufferBinding bufferBindings[] = {
 		{
 			.buffer = vertexBuffer,
 			.offset = 0,
 		},
 	};
-
 	SDL_BindGPUVertexBuffers(renderPass, 0, bufferBindings, SDL_arraysize(bufferBindings));
 
-	mat4 model;
-	glm_mat4_identity(model);
+	struct UniformBufferObject ubo = {};
+	glm_scale_make(ubo.model, (vec3){0.75f, 0.75f, 0.75f});
 
-	mat4 perspective, view, persview;
-	glm_perspective_default(640.0/480.0, perspective);
-	glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, view);
-	glm_mat4_mul(perspective, view, persview);
+	//mat4 perspective, view, persview;
+	//glm_perspective_default(640.0f/480.0f, perspective);
+	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, view);
+	//glm_mat4_mul(perspective, view, persview);
 
-
-	SDL_PushGPUVertexUniformData(commandBuffer, 0, &model, sizeof(model));
-	//SDL_PushGPUVertexUniformData(commandBuffer, 1, &persview, sizeof(persview));
+	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 
 	// issue a draw call
 	SDL_DrawGPUPrimitives(renderPass, 3, 1, 0, 0);
-
-
 
 	SDL_EndGPURenderPass(renderPass);
 
