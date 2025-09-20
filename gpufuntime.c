@@ -1,6 +1,7 @@
 #include "SDL3/SDL_gpu.h"
 #include "SDL3/SDL_init.h"
 #include "SDL3/SDL_stdinc.h"
+#include <stddef.h>
 #define SDL_MAIN_USE_CALLBACKS
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL.h>
@@ -12,11 +13,42 @@ struct Vertex
 {
 	vec3 pos;
 	vec4 rgba;
-} __attribute((packed));
+
+	float rot;
+};
+
+#define VERTEX_ATTR_FLOAT(_loc, _off)			\
+{							\
+	.buffer_slot = 0,				\
+	.location = _loc,				\
+	.format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,	\
+	.offset = _off,					\
+}
+
+#define VERTEX_ATTR_VEC3(_loc, _off)			\
+{							\
+	.buffer_slot = 0,				\
+	.location = _loc,				\
+	.format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,	\
+	.offset = _off,					\
+}
+
+#define VERTEX_ATTR_VEC4(_loc, _off)			\
+{							\
+	.buffer_slot = 0,				\
+	.location = _loc,				\
+	.format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,	\
+	.offset = _off,					\
+}
+
+static SDL_GPUVertexAttribute vertexAttributes[] = {
+	VERTEX_ATTR_VEC3(0, offsetof(struct Vertex, pos)),
+	VERTEX_ATTR_VEC4(1, offsetof(struct Vertex, rgba)),
+	VERTEX_ATTR_FLOAT(2, offsetof(struct Vertex, rot)),
+};
 
 struct UniformBufferObject
 {
-	mat4 model;
 	mat4 projection;
 	mat4 view;
 };
@@ -74,37 +106,36 @@ static bool create_transfer_buffer(void)
 	return true;
 }
 
-static void update_transfer_buffer(void)
+
+int rot = 0;
+
+static void update_and_upload_vertex_buffer(void)
 {
+	rot = (rot + 1) %360;
+	vertices[0].rot = glm_rad(rot);
+	vertices[1].rot = glm_rad(rot);
+	vertices[2].rot = glm_rad(rot);
+
 	struct Vertex* data = (struct Vertex*)SDL_MapGPUTransferBuffer(device, transferBuffer, false);
 
 	SDL_memcpy(data, vertices, sizeof(vertices));
 
 	SDL_UnmapGPUTransferBuffer(device, transferBuffer);
-}
 
-static void upload_vertex_buffer(void)
-{
-	// start a copy pass
 	SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
 	SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(commandBuffer);
 
-	// where is the data
-	SDL_GPUTransferBufferLocation location = {};
-	location.transfer_buffer = transferBuffer;
-	location.offset = 0; // start from the beginning
+	SDL_GPUTransferBufferLocation location = {
+		.transfer_buffer = transferBuffer,
+	};
 
-	// where to upload the data
 	SDL_GPUBufferRegion region = {
 		.buffer = vertexBuffer,
 		.size = sizeof(vertices),
-		.offset = 0,
 	};
 
-	// upload the data
 	SDL_UploadToGPUBuffer(copyPass, &location, &region, true);
 
-	// end the copy pass
 	SDL_EndGPUCopyPass(copyPass);
 	SDL_SubmitGPUCommandBuffer(commandBuffer);
 }
@@ -166,12 +197,6 @@ static bool load_fragment_shader(void)
 
 static bool create_pipeline(void)
 {
-	// create the graphics pipeline
-	SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {};
-	pipelineInfo.vertex_shader = vertexShader;
-	pipelineInfo.fragment_shader = fragmentShader;
-	pipelineInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-
 	// describe the vertex buffers
 	SDL_GPUVertexBufferDescription vertexBufferDesctiptions[] =
 	{
@@ -182,29 +207,6 @@ static bool create_pipeline(void)
 			.pitch = sizeof(struct Vertex),
 		}
 	};
-
-	pipelineInfo.vertex_input_state.num_vertex_buffers = SDL_arraysize(vertexBufferDesctiptions);
-	pipelineInfo.vertex_input_state.vertex_buffer_descriptions = vertexBufferDesctiptions;
-
-	// describe the vertex attribute
-	SDL_GPUVertexAttribute vertexAttributes[] = {
-		// a_position
-		{
-			.buffer_slot = 0,
-			.location = 0,
-			.format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-			.offset = 0,
-		},
-		// a_color
-		{
-			.buffer_slot = 0,
-			.location = 1,
-			.format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
-			.offset = sizeof(float) * 3,
-		},
-	};
-	pipelineInfo.vertex_input_state.num_vertex_attributes = SDL_arraysize(vertexAttributes);
-	pipelineInfo.vertex_input_state.vertex_attributes = vertexAttributes;
 
 	// describe the color target
 	SDL_GPUColorTargetDescription colorTargetDescriptions[] = {
@@ -220,9 +222,21 @@ static bool create_pipeline(void)
 		},
 	};
 
+	// create the graphics pipeline
+	SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {
+		.vertex_shader = vertexShader,
+		.fragment_shader = fragmentShader,
+		.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
 
-	pipelineInfo.target_info.num_color_targets = SDL_arraysize(colorTargetDescriptions);
-	pipelineInfo.target_info.color_target_descriptions = colorTargetDescriptions;
+		.vertex_input_state.num_vertex_buffers = SDL_arraysize(vertexBufferDesctiptions),
+		.vertex_input_state.vertex_buffer_descriptions = vertexBufferDesctiptions,
+
+		.vertex_input_state.num_vertex_attributes = SDL_arraysize(vertexAttributes),
+		.vertex_input_state.vertex_attributes = vertexAttributes,
+
+		.target_info.num_color_targets = SDL_arraysize(colorTargetDescriptions),
+		.target_info.color_target_descriptions = colorTargetDescriptions,
+	};
 
 	// create the pipeline
 	graphicsPipeline = SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
@@ -249,9 +263,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	if (!create_transfer_buffer())
 		return SDL_APP_FAILURE;
 
-	update_transfer_buffer();
-	upload_vertex_buffer();
-
 	if (!load_vertex_shader())
 		return SDL_APP_FAILURE;
 
@@ -264,10 +275,19 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	return SDL_APP_CONTINUE;
 }
 
+static void do_uniform_data(struct UniformBufferObject *ubo)
+{
+	//glm_mat4_mul(scale, rot, ubo.model);
 
-int rot = 0;
+	glm_ortho_default(480.0f/480.0f, ubo->projection);
+	//glm_perspective_default(, ubo.perspective);
+	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, ubo.view);
+}
+
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
+	update_and_upload_vertex_buffer();
+
 	SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
 	SDL_GPUTexture* swapchainTexture;
 	Uint32 width, height;
@@ -305,17 +325,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	SDL_BindGPUVertexBuffers(renderPass, 0, bufferBindings, SDL_arraysize(bufferBindings));
 
 	struct UniformBufferObject ubo = {};
-	//glm_scale_make(ubo.model, (vec3){1.00f, 1.00f, 1.00f});
-	//glm_rotate_x(tmp, 45, ubo.model);
-	rot = (rot + 1) %360;
-	glm_rotate_atm(ubo.model, (vec3) {0.0f,0.0f,0.0f}, glm_rad(rot), (vec3) {1.0f,0.0f,0.0f});
-
-	//glm_mat4_mul(scale, rot, ubo.model);
-
-	glm_ortho_default(480.0f/480.0f, ubo.projection);
-	//glm_perspective_default(, ubo.perspective);
-	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, ubo.view);
-
+	do_uniform_data(&ubo);
 	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 
 	// issue a draw call
