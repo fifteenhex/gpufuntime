@@ -140,18 +140,18 @@ static void update_and_upload_vertex_buffer(void)
 	SDL_SubmitGPUCommandBuffer(commandBuffer);
 }
 
+extern char _binary_vertex_spv_start;
+extern char _binary_vertex_spv_end;
+static const void *vertex_spv = &_binary_vertex_spv_start;
+static const void *vertex_spv_end = &_binary_vertex_spv_end;
+
 static bool load_vertex_shader(void)
 {
-	size_t vertexCodeSize;
+	size_t sz = vertex_spv_end - vertex_spv;
 
-	void* vertexCode = SDL_LoadFile("vertex.spv", &vertexCodeSize);
-	if (!vertexCode)
-		return false;
-
-	// create the vertex shader
 	SDL_GPUShaderCreateInfo vertexInfo = {
-		.code = (Uint8*)vertexCode,
-		.code_size = vertexCodeSize,
+		.code = vertex_spv,
+		.code_size = sz,
 		.entrypoint = "main",
 		.format = SDL_GPU_SHADERFORMAT_SPIRV,
 		.stage = SDL_GPU_SHADERSTAGE_VERTEX,
@@ -160,26 +160,26 @@ static bool load_vertex_shader(void)
 		.num_storage_textures = 0,
 		.num_uniform_buffers = 1,
 	};
-	vertexShader = SDL_CreateGPUShader(device, &vertexInfo);
 
-	SDL_free(vertexCode);
+	vertexShader = SDL_CreateGPUShader(device, &vertexInfo);
+	if (!vertexShader)
+		return false;
 
 	return true;
 }
 
+extern char _binary_fragment_spv_start;
+extern char _binary_fragment_spv_end;
+static const void *fragment_spv = &_binary_fragment_spv_start;
+static const void *fragment_spv_end = &_binary_fragment_spv_end;
+
 static bool load_fragment_shader(void)
 {
-	// create the fragment shader
-	size_t fragmentCodeSize;
+	size_t sz = fragment_spv_end - fragment_spv;
 
-	void* fragmentCode = SDL_LoadFile("fragment.spv", &fragmentCodeSize);
-	if (!fragmentCode)
-		return false;
-
-	// create the fragment shader
 	SDL_GPUShaderCreateInfo fragmentInfo = {
-		.code = (Uint8*)fragmentCode,
-		.code_size = fragmentCodeSize,
+		.code = fragment_spv,
+		.code_size = sz,
 		.entrypoint = "main",
 		.format = SDL_GPU_SHADERFORMAT_SPIRV,
 		.stage = SDL_GPU_SHADERSTAGE_FRAGMENT,
@@ -190,8 +190,9 @@ static bool load_fragment_shader(void)
 	};
 
 	fragmentShader = SDL_CreateGPUShader(device, &fragmentInfo);
+	if (!fragmentShader)
+		return false;
 
-	SDL_free(fragmentCode);
 	return true;
 }
 
@@ -246,7 +247,7 @@ static bool create_pipeline(void)
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
-	window = SDL_CreateWindow("Hello, Triangle!", 480, 480, SDL_WINDOW_RESIZABLE);
+	window = SDL_CreateWindow("Can you see? I'm triangle", 480, 480, SDL_WINDOW_RESIZABLE);
 	if (!window)
 		return SDL_APP_FAILURE;
 
