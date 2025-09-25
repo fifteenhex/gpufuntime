@@ -8,6 +8,7 @@
 #include <SDL3/SDL_log.h>
 
 #include <cglm/cglm.h>
+#include <cgltf.h>
 
 struct Vertex
 {
