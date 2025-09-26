@@ -54,22 +54,67 @@ static struct Vertex vertices[] =
 	}
 };
 
-static SDL_Window* window;
-
-static SDL_GPUShader* vertexShader;
 static SDL_GPUShader* fragmentShader;
 
 static SDL_GPUGraphicsPipeline* graphicsPipeline;
 
+struct model {
+	cgltf_data* cube;
+
+	SDL_GPUBuffer* vertexBuffer;
+	SDL_GPUBuffer* indexBuffer;
+};
+
+static void model_free(struct model *model)
+{
+	cgltf_free(model->cube);
+}
+
+static const void *model_get_vertices(cgltf_data *model, size_t *sz)
+{
+	// todo: mm
+	*sz = model->buffer_views[0].size;
+	return model->bin + model->buffer_views[0].offset;
+}
+
+static const void *model_get_indices(cgltf_data *model, size_t *sz)
+{
+	// todo: mm
+	*sz = model->buffer_views[1].size;
+	return model->bin + model->buffer_views[1].offset;
+}
+
+
+EMBEDDED_BIN(models_cube_glb);
+static const void *cube_glb = &_binary_models_cube_glb_start;
+static const void *cube_glb_end = &_binary_models_cube_glb_end;
+
 static struct cntx {
+	SDL_Window* window;
 	SDL_GPUDevice *device;
+
+	/* Shaders */
+	SDL_GPUShader* vertexShader;
 
 	SDL_GPUBuffer* vertexBuffer;
 	SDL_GPUBuffer* indexBuffer;
 	SDL_GPUTransferBuffer* transferBuffer;
 
-	cgltf_data* cube;
+
+	struct model cube;
 } _cntx;
+
+static bool load_model_cube(struct cntx *cntx)
+{
+	size_t sz = cube_glb_end - cube_glb;
+	cgltf_options options = {0};
+
+	cgltf_result result = cgltf_parse(&options, cube_glb, sz, &cntx->cube.cube);
+	if (result != cgltf_result_success)
+		return false;
+
+	return true;
+}
 
 static bool create_vertex_buffer(struct cntx *cntx)
 {
@@ -101,12 +146,14 @@ static bool create_index_buffer(struct cntx *cntx)
 
 static bool create_transfer_buffer(struct cntx *cntx)
 {
+	SDL_GPUDevice *device = cntx->device;
+
 	SDL_GPUTransferBufferCreateInfo transferInfo = {
 		.size = sizeof(vertices),
 		.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
 	};
 
-	cntx->transferBuffer = SDL_CreateGPUTransferBuffer(cntx->device, &transferInfo);
+	cntx->transferBuffer = SDL_CreateGPUTransferBuffer(device, &transferInfo);
 	if (!cntx->transferBuffer)
 		return false;
 
@@ -116,57 +163,56 @@ static bool create_transfer_buffer(struct cntx *cntx)
 
 int rot = 0;
 
+static void update_transferbuffer(struct cntx *cntx,
+				  SDL_GPUTransferBuffer *txbuf,
+				  const void *data, size_t sz)
+{
+	SDL_GPUDevice *device = cntx->device;
+	void *mapped;
+
+	mapped = SDL_MapGPUTransferBuffer(device, txbuf, false);
+	if (!mapped)
+		return;
+
+	SDL_memcpy(mapped, data, sz);
+	SDL_UnmapGPUTransferBuffer(device, txbuf);
+}
+
+static void upload_transferbuffer(SDL_GPUCopyPass* copyPass,
+				  SDL_GPUBuffer *dstbuf,
+				  SDL_GPUTransferBuffer *txbuf,
+				  size_t sz)
+{
+	SDL_GPUTransferBufferLocation location = {
+		.transfer_buffer = txbuf,
+	};
+
+	SDL_GPUBufferRegion region = {
+		.buffer = dstbuf,
+		.size = sz,
+	};
+
+	SDL_UploadToGPUBuffer(copyPass, &location, &region, true);
+}
+
 static void update_and_upload_vertex_buffer(struct cntx *cntx)
 {
 	SDL_GPUDevice *device = cntx->device;
 
-	rot = (rot + 1) %360;
+	rot = (rot + 1) % 360;
 	vertices[0].rot = glm_rad(rot);
 	vertices[1].rot = glm_rad(rot);
 	vertices[2].rot = glm_rad(rot);
 
-	struct Vertex* data = (struct Vertex*)SDL_MapGPUTransferBuffer(device, cntx->transferBuffer, false);
-
-	SDL_memcpy(data, vertices, sizeof(vertices));
-
-	SDL_UnmapGPUTransferBuffer(device, cntx->transferBuffer);
+	update_transferbuffer(cntx, cntx->transferBuffer, vertices, sizeof(vertices));
 
 	SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
 	SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(commandBuffer);
 
-	SDL_GPUTransferBufferLocation location = {
-		.transfer_buffer = cntx->transferBuffer,
-	};
-
-	SDL_GPUBufferRegion region = {
-		.buffer = cntx->vertexBuffer,
-		.size = sizeof(vertices),
-	};
-
-	SDL_UploadToGPUBuffer(copyPass, &location, &region, true);
+	upload_transferbuffer(copyPass, cntx->vertexBuffer, cntx->transferBuffer, sizeof(vertices));
 
 	SDL_EndGPUCopyPass(copyPass);
 	SDL_SubmitGPUCommandBuffer(commandBuffer);
-}
-
-
-
-EMBEDDED_BIN(models_cube_glb);
-static const void *cube_glb = &_binary_models_cube_glb_start;
-static const void *cube_glb_end = &_binary_models_cube_glb_end;
-
-
-static bool load_model_cube(struct cntx *cntx)
-{
-	size_t sz = cube_glb_end - cube_glb;
-	cgltf_options options = {0};
-
-
-	cgltf_result result = cgltf_parse(&options, cube_glb, sz, &cntx->cube);
-	if (result != cgltf_result_success)
-		return false;
-
-	return true;
 }
 
 EMBEDDED_BIN(vertex_spv);
@@ -190,8 +236,8 @@ static bool load_vertex_shader(struct cntx *cntx)
 		.num_uniform_buffers = 1,
 	};
 
-	vertexShader = SDL_CreateGPUShader(device, &vertexInfo);
-	if (!vertexShader)
+	cntx->vertexShader = SDL_CreateGPUShader(device, &vertexInfo);
+	if (!cntx->vertexShader)
 		return false;
 
 	return true;
@@ -228,10 +274,10 @@ static bool load_fragment_shader(struct cntx *cntx)
 static bool create_pipeline(struct cntx *cntx)
 {
 	SDL_GPUDevice *device = cntx->device;
+	SDL_Window *window = cntx->window;
 
 	// describe the vertex buffers
-	SDL_GPUVertexBufferDescription vertexBufferDesctiptions[] =
-	{
+	SDL_GPUVertexBufferDescription vertexBufferDesctiptions[] = {
 		{
 			.slot = 0,
 			.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
@@ -256,15 +302,17 @@ static bool create_pipeline(struct cntx *cntx)
 
 	// create the graphics pipeline
 	SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {
-		.vertex_shader = vertexShader,
+		.vertex_shader = cntx->vertexShader,
 		.fragment_shader = fragmentShader,
 		.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
 
-		.vertex_input_state.num_vertex_buffers = SDL_arraysize(vertexBufferDesctiptions),
-		.vertex_input_state.vertex_buffer_descriptions = vertexBufferDesctiptions,
+		.vertex_input_state = {
+			.num_vertex_buffers = SDL_arraysize(vertexBufferDesctiptions),
+			.vertex_buffer_descriptions = vertexBufferDesctiptions,
 
-		.vertex_input_state.num_vertex_attributes = SDL_arraysize(vertexAttributes),
-		.vertex_input_state.vertex_attributes = vertexAttributes,
+			.num_vertex_attributes = SDL_arraysize(vertexAttributes),
+			.vertex_attributes = vertexAttributes,
+		},
 
 		.target_info.num_color_targets = SDL_arraysize(colorTargetDescriptions),
 		.target_info.color_target_descriptions = colorTargetDescriptions,
@@ -272,6 +320,8 @@ static bool create_pipeline(struct cntx *cntx)
 
 	// create the pipeline
 	graphicsPipeline = SDL_CreateGPUGraphicsPipeline(device, &pipelineInfo);
+	if (!graphicsPipeline)
+		return false;
 
 	return true;
 }
@@ -282,15 +332,15 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
 	memset(cntx, 0, sizeof(*cntx));
 
-	window = SDL_CreateWindow("Can you see? I'm triangle", 480, 480, SDL_WINDOW_RESIZABLE);
-	if (!window)
+	cntx->window = SDL_CreateWindow("Can you see? I'm triangle", 480, 480, SDL_WINDOW_RESIZABLE);
+	if (!cntx->window)
 		return SDL_APP_FAILURE;
 
 	cntx->device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, true, NULL);
 	if (!cntx->device)
 		return SDL_APP_FAILURE;
 
-	if (!SDL_ClaimWindowForGPUDevice(cntx->device, window))
+	if (!SDL_ClaimWindowForGPUDevice(cntx->device, cntx->window))
 		return SDL_APP_FAILURE;
 
 	if (!create_vertex_buffer(cntx))
@@ -330,6 +380,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 {
 	struct cntx *cntx = &_cntx;
 	SDL_GPUDevice *device = cntx->device;
+	SDL_Window *window = cntx->window;
 
 	update_and_upload_vertex_buffer(cntx);
 
@@ -397,14 +448,15 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {
 	struct cntx *cntx = &_cntx;
 	SDL_GPUDevice *device = cntx->device;
+	SDL_Window *window = cntx->window;
 
 	SDL_ReleaseGPUTransferBuffer(device, cntx->transferBuffer);
 
-	cgltf_free(cntx->cube);
+	model_free(&cntx->cube);
 
 	SDL_ReleaseGPUBuffer(device, cntx->vertexBuffer);
 	SDL_ReleaseGPUBuffer(device, cntx->indexBuffer);
-	SDL_ReleaseGPUShader(device, vertexShader);
+	SDL_ReleaseGPUShader(device, cntx->vertexShader);
 	SDL_ReleaseGPUShader(device, fragmentShader);
 	SDL_DestroyGPUDevice(device);
 	SDL_DestroyWindow(window);
