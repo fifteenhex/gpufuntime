@@ -3,7 +3,7 @@
 
 #include "SDL3/SDL_gpu.h"
 
-#include "model.h"
+struct model;
 
 static struct cntx {
 	SDL_Window* window;
@@ -14,9 +14,7 @@ static struct cntx {
 	SDL_GPUShader* fragmentShader;
 
 	SDL_GPUBuffer* vertexBuffer;
-	SDL_GPUTransferBuffer* transferBuffer;
 
-
-	struct model cube;
+	struct model *cube;
 } _cntx;
 #endif

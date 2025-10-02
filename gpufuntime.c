@@ -2,6 +2,7 @@
 #include "SDL3/SDL_init.h"
 #include "SDL3/SDL_stdinc.h"
 #include <stddef.h>
+#include <stdlib.h>
 #define SDL_MAIN_USE_CALLBACKS
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL.h>
@@ -9,29 +10,27 @@
 
 #include <cglm/cglm.h>
 
+#include "buffers.h"
+#include "cntx.h"
+#include "model.h"
+#include "utils.h"
+
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
-#include "utils.h"
-
+/// junk
 struct Vertex
 {
 	vec3 pos;
-	vec4 rgba;
+//	vec4 rgba;
 
-	float rot;
+//	float rot;
 };
 
 static SDL_GPUVertexAttribute vertexAttributes[] = {
 	VERTEX_ATTR_VEC3(0, offsetof(struct Vertex, pos)),
-	VERTEX_ATTR_VEC4(1, offsetof(struct Vertex, rgba)),
-	VERTEX_ATTR_FLOAT(2, offsetof(struct Vertex, rot)),
-};
-
-struct UniformBufferObject
-{
-	mat4 projection;
-	mat4 view;
+//	VERTEX_ATTR_VEC4(1, offsetof(struct Vertex, rgba)),
+//	VERTEX_ATTR_FLOAT(2, offsetof(struct Vertex, rot)),
 };
 
 // a list of vertices
@@ -40,179 +39,84 @@ static struct Vertex vertices[] =
 	// top vertex
 	{
 		{0.0f, 0.5f, 0.0f},
-		{1.0f, 0.0f, 0.0f, 1.0f},
+		//{1.0f, 0.0f, 0.0f, 1.0f},
 	},
 	// bottom left vertex
 	{
 		{-0.75f, -0.5f, 0.0f},
-		{1.0f, 1.0f, 0.0f, 1.0f}
+		//{1.0f, 1.0f, 0.0f, 1.0f}
 	},
 	// bottom right vertex
 	{
 		{0.75f, -0.5f, 0.0f},
-		{1.0f, 0.0f, 1.0f, 1.0f},
+		//{1.0f, 0.0f, 1.0f, 1.0f},
 	}
 };
+///
 
-static SDL_GPUShader* fragmentShader;
-
-static SDL_GPUGraphicsPipeline* graphicsPipeline;
-
-struct model {
-	cgltf_data* cube;
-
-	SDL_GPUBuffer* vertexBuffer;
-	SDL_GPUBuffer* indexBuffer;
+struct UniformBufferObject
+{
+	mat4 projection;
+	mat4 view;
+	float rot;
 };
 
-static void model_free(struct model *model)
-{
-	cgltf_free(model->cube);
-}
-
-static const void *model_get_vertices(cgltf_data *model, size_t *sz)
-{
-	// todo: mm
-	*sz = model->buffer_views[0].size;
-	return model->bin + model->buffer_views[0].offset;
-}
-
-static const void *model_get_indices(cgltf_data *model, size_t *sz)
-{
-	// todo: mm
-	*sz = model->buffer_views[1].size;
-	return model->bin + model->buffer_views[1].offset;
-}
-
+static SDL_GPUGraphicsPipeline* graphicsPipeline;
 
 EMBEDDED_BIN(models_cube_glb);
 static const void *cube_glb = &_binary_models_cube_glb_start;
 static const void *cube_glb_end = &_binary_models_cube_glb_end;
 
-static struct cntx {
-	SDL_Window* window;
-	SDL_GPUDevice *device;
-
-	/* Shaders */
-	SDL_GPUShader* vertexShader;
-
-	SDL_GPUBuffer* vertexBuffer;
-	SDL_GPUBuffer* indexBuffer;
-	SDL_GPUTransferBuffer* transferBuffer;
-
-
-	struct model cube;
-} _cntx;
-
 static bool load_model_cube(struct cntx *cntx)
 {
+	struct model *model = malloc(sizeof(*model));
 	size_t sz = cube_glb_end - cube_glb;
 	cgltf_options options = {0};
 
-	cgltf_result result = cgltf_parse(&options, cube_glb, sz, &cntx->cube.cube);
+	if (!model)
+		return false;
+
+	cgltf_result result = cgltf_parse(&options, cube_glb, sz, &model->cube);
 	if (result != cgltf_result_success)
 		return false;
 
-	return true;
-}
-
-static bool create_vertex_buffer(struct cntx *cntx)
-{
-	SDL_GPUBufferCreateInfo bufferInfo = {
-		.size = sizeof(vertices),
-		.usage = SDL_GPU_BUFFERUSAGE_VERTEX,
-	};
-
-	cntx->vertexBuffer = SDL_CreateGPUBuffer(cntx->device, &bufferInfo);
-	if (!cntx->vertexBuffer)
+	model_get_vertices(model->cube, &model->vertices, &model->vertices_sz);
+	if (!alloc_vertex_buffer(cntx, &model->vertex_buffer, model->vertices_sz))
 		return false;
 
-	return true;
-}
-
-static bool create_index_buffer(struct cntx *cntx)
-{
-	SDL_GPUBufferCreateInfo bufferInfo = {
-		.size = sizeof(vertices),
-		.usage = SDL_GPU_BUFFERUSAGE_INDEX,
-	};
-
-	cntx->indexBuffer = SDL_CreateGPUBuffer(cntx->device, &bufferInfo);
-	if (!cntx->indexBuffer)
+	model_get_indices(model->cube, &model->indices, &model->indices_sz);
+	if (!alloc_index_buffer(cntx, &model->index_buffer, model->indices_sz))
 		return false;
 
+	cntx->cube = model;
 	return true;
 }
 
-static bool create_transfer_buffer(struct cntx *cntx)
-{
-	SDL_GPUDevice *device = cntx->device;
-
-	SDL_GPUTransferBufferCreateInfo transferInfo = {
-		.size = sizeof(vertices),
-		.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-	};
-
-	cntx->transferBuffer = SDL_CreateGPUTransferBuffer(device, &transferInfo);
-	if (!cntx->transferBuffer)
-		return false;
-
-	return true;
-}
-
-
-int rot = 0;
-
-static void update_transferbuffer(struct cntx *cntx,
-				  SDL_GPUTransferBuffer *txbuf,
-				  const void *data, size_t sz)
-{
-	SDL_GPUDevice *device = cntx->device;
-	void *mapped;
-
-	mapped = SDL_MapGPUTransferBuffer(device, txbuf, false);
-	if (!mapped)
-		return;
-
-	SDL_memcpy(mapped, data, sz);
-	SDL_UnmapGPUTransferBuffer(device, txbuf);
-}
-
-static void upload_transferbuffer(SDL_GPUCopyPass* copyPass,
-				  SDL_GPUBuffer *dstbuf,
-				  SDL_GPUTransferBuffer *txbuf,
-				  size_t sz)
-{
-	SDL_GPUTransferBufferLocation location = {
-		.transfer_buffer = txbuf,
-	};
-
-	SDL_GPUBufferRegion region = {
-		.buffer = dstbuf,
-		.size = sz,
-	};
-
-	SDL_UploadToGPUBuffer(copyPass, &location, &region, true);
-}
+float rot = 0;
 
 static void update_and_upload_vertex_buffer(struct cntx *cntx)
 {
 	SDL_GPUDevice *device = cntx->device;
+	SDL_GPUTransferBuffer* transfer_buffer;
 
-	rot = (rot + 1) % 360;
-	vertices[0].rot = glm_rad(rot);
-	vertices[1].rot = glm_rad(rot);
-	vertices[2].rot = glm_rad(rot);
+	rot = (rot + 0.01f);
+	//vertices[0].rot = glm_rad(rot);
+	//vertices[1].rot = glm_rad(rot);
+	//vertices[2].rot = glm_rad(rot);
 
-	update_transferbuffer(cntx, cntx->transferBuffer, vertices, sizeof(vertices));
+	if (!alloc_transfer_buffer(cntx, &transfer_buffer, sizeof(vertices)))
+		return;
 
-	SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
-	SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(commandBuffer);
+	update_transferbuffer(cntx, transfer_buffer, vertices, sizeof(vertices));
 
-	upload_transferbuffer(copyPass, cntx->vertexBuffer, cntx->transferBuffer, sizeof(vertices));
+	SDL_GPUCommandBuffer* command_buffer = SDL_AcquireGPUCommandBuffer(device);
+	SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(command_buffer);
 
-	SDL_EndGPUCopyPass(copyPass);
-	SDL_SubmitGPUCommandBuffer(commandBuffer);
+	upload_transferbuffer(copy_pass, cntx->vertexBuffer, transfer_buffer, sizeof(vertices));
+
+	SDL_EndGPUCopyPass(copy_pass);
+	SDL_SubmitGPUCommandBuffer(command_buffer);
+	SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
 }
 
 EMBEDDED_BIN(vertex_spv);
@@ -224,7 +128,7 @@ static bool load_vertex_shader(struct cntx *cntx)
 	SDL_GPUDevice *device = cntx->device;
 	size_t sz = vertex_spv_end - vertex_spv;
 
-	SDL_GPUShaderCreateInfo vertexInfo = {
+	const SDL_GPUShaderCreateInfo vertexInfo = {
 		.code = vertex_spv,
 		.code_size = sz,
 		.entrypoint = "main",
@@ -252,7 +156,7 @@ static bool load_fragment_shader(struct cntx *cntx)
 	SDL_GPUDevice *device = cntx->device;
 	size_t sz = fragment_spv_end - fragment_spv;
 
-	SDL_GPUShaderCreateInfo fragmentInfo = {
+	const SDL_GPUShaderCreateInfo fragmentInfo = {
 		.code = fragment_spv,
 		.code_size = sz,
 		.entrypoint = "main",
@@ -264,8 +168,8 @@ static bool load_fragment_shader(struct cntx *cntx)
 		.num_uniform_buffers = 0,
 	};
 
-	fragmentShader = SDL_CreateGPUShader(device, &fragmentInfo);
-	if (!fragmentShader)
+	cntx->fragmentShader = SDL_CreateGPUShader(device, &fragmentInfo);
+	if (!cntx->fragmentShader)
 		return false;
 
 	return true;
@@ -277,7 +181,7 @@ static bool create_pipeline(struct cntx *cntx)
 	SDL_Window *window = cntx->window;
 
 	// describe the vertex buffers
-	SDL_GPUVertexBufferDescription vertexBufferDesctiptions[] = {
+	const SDL_GPUVertexBufferDescription vertexBufferDesctiptions[] = {
 		{
 			.slot = 0,
 			.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
@@ -287,7 +191,7 @@ static bool create_pipeline(struct cntx *cntx)
 	};
 
 	// describe the color target
-	SDL_GPUColorTargetDescription colorTargetDescriptions[] = {
+	const SDL_GPUColorTargetDescription colorTargetDescriptions[] = {
 		{
 			.blend_state.enable_blend = true,
 			.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD,
@@ -301,9 +205,9 @@ static bool create_pipeline(struct cntx *cntx)
 	};
 
 	// create the graphics pipeline
-	SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {
+	const SDL_GPUGraphicsPipelineCreateInfo pipelineInfo = {
 		.vertex_shader = cntx->vertexShader,
-		.fragment_shader = fragmentShader,
+		.fragment_shader = cntx->fragmentShader,
 		.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
 
 		.vertex_input_state = {
@@ -332,7 +236,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 
 	memset(cntx, 0, sizeof(*cntx));
 
-	cntx->window = SDL_CreateWindow("Can you see? I'm triangle", 480, 480, SDL_WINDOW_RESIZABLE);
+	cntx->window = SDL_CreateWindow("Can you see? I'm cube", 480, 480, SDL_WINDOW_RESIZABLE);
 	if (!cntx->window)
 		return SDL_APP_FAILURE;
 
@@ -343,13 +247,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	if (!SDL_ClaimWindowForGPUDevice(cntx->device, cntx->window))
 		return SDL_APP_FAILURE;
 
-	if (!create_vertex_buffer(cntx))
-		return SDL_APP_FAILURE;
-
-	if (!create_index_buffer(cntx))
-		return SDL_APP_FAILURE;
-
-	if (!create_transfer_buffer(cntx))
+	if (!alloc_vertex_buffer(cntx, &cntx->vertexBuffer,sizeof(vertices)))
 		return SDL_APP_FAILURE;
 
 	if (!load_vertex_shader(cntx))
@@ -364,6 +262,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	if (!load_model_cube(cntx))
 		return SDL_APP_FAILURE;
 
+	if (!upload_model(cntx, cntx->cube))
+		return SDL_APP_FAILURE;
+
 	return SDL_APP_CONTINUE;
 }
 
@@ -374,6 +275,7 @@ static void do_uniform_data(struct UniformBufferObject *ubo)
 	glm_ortho_default(480.0f/480.0f, ubo->projection);
 	//glm_perspective_default(, ubo.perspective);
 	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, ubo.view);
+	ubo->rot = rot;
 }
 
 SDL_AppResult SDL_AppIterate(void *appstate)
@@ -384,10 +286,10 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
 	update_and_upload_vertex_buffer(cntx);
 
-	SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
 	SDL_GPUTexture* swapchainTexture;
 	Uint32 width, height;
 
+	SDL_GPUCommandBuffer* commandBuffer = SDL_AcquireGPUCommandBuffer(device);
 	SDL_WaitAndAcquireGPUSwapchainTexture(commandBuffer, window, &swapchainTexture, &width, &height);
 
 	if (swapchainTexture == NULL)
@@ -396,7 +298,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		return SDL_APP_CONTINUE;
 	}
 
-	SDL_GPUColorTargetInfo colorTargetInfo = {
+	const SDL_GPUColorTargetInfo colorTargetInfo = {
 		.clear_color =
 		{
 			.r = 240/255.0f,
@@ -409,25 +311,56 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		.texture = swapchainTexture,
 	};
 
-	SDL_GPURenderPass* renderPass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, NULL);
-	SDL_BindGPUGraphicsPipeline(renderPass, graphicsPipeline);
+	SDL_GPURenderPass* renderpass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, NULL);
+	SDL_BindGPUGraphicsPipeline(renderpass, graphicsPipeline);
 
-	SDL_GPUBufferBinding bufferBindings[] = {
-		{
-			.buffer = cntx->vertexBuffer,
-			.offset = 0,
-		},
-	};
-	SDL_BindGPUVertexBuffers(renderPass, 0, bufferBindings, SDL_arraysize(bufferBindings));
+	if (0) {
+		const SDL_GPUBufferBinding bufferBindings[] = {
+			{
+				.buffer = cntx->vertexBuffer,
+				.offset = 0,
+			},
+		};
+		SDL_BindGPUVertexBuffers(renderpass, 0, bufferBindings, SDL_arraysize(bufferBindings));
 
-	struct UniformBufferObject ubo = {};
-	do_uniform_data(&ubo);
-	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+		struct UniformBufferObject ubo = {};
+		do_uniform_data(&ubo);
+		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 
-	// issue a draw call
-	SDL_DrawGPUPrimitives(renderPass, 3, 1, 0, 0);
+		// issue a draw call
+		SDL_DrawGPUPrimitives(renderpass, 3, 1, 0, 0);
 
-	SDL_EndGPURenderPass(renderPass);
+		SDL_EndGPURenderPass(renderpass);
+
+		//SDL_SubmitGPUCommandBuffer(commandBuffer);
+	}
+
+	if (1){
+		const SDL_GPUBufferBinding buffer_bindings0[] = {
+			{
+				.buffer = cntx->cube->vertex_buffer,
+				.offset = 0,
+			},
+		};
+			const SDL_GPUBufferBinding buffer_bindings1[] = {
+			{
+				.buffer = cntx->cube->index_buffer,
+				.offset = 0,
+			},
+		};
+		SDL_BindGPUVertexBuffers(renderpass, 0, buffer_bindings0, SDL_arraysize(buffer_bindings0));
+		SDL_BindGPUIndexBuffer(renderpass, buffer_bindings1, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+		//SDL_DrawGPUPrimitives(renderpass, 3, 1, 0, 0);
+
+		struct UniformBufferObject ubo = {};
+		do_uniform_data(&ubo);
+		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+
+		SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
+
+		SDL_EndGPURenderPass(renderpass);
+
+	}
 
 	SDL_SubmitGPUCommandBuffer(commandBuffer);
 
@@ -450,14 +383,11 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	SDL_GPUDevice *device = cntx->device;
 	SDL_Window *window = cntx->window;
 
-	SDL_ReleaseGPUTransferBuffer(device, cntx->transferBuffer);
-
-	model_free(&cntx->cube);
+	model_free(cntx, cntx->cube);
 
 	SDL_ReleaseGPUBuffer(device, cntx->vertexBuffer);
-	SDL_ReleaseGPUBuffer(device, cntx->indexBuffer);
 	SDL_ReleaseGPUShader(device, cntx->vertexShader);
-	SDL_ReleaseGPUShader(device, fragmentShader);
+	SDL_ReleaseGPUShader(device, cntx->fragmentShader);
 	SDL_DestroyGPUDevice(device);
 	SDL_DestroyWindow(window);
 }
