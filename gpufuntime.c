@@ -92,14 +92,14 @@ static bool load_model_cube(struct cntx *cntx)
 	return true;
 }
 
-float rot = 0;
+int rot = 0;
 
 static void update_and_upload_vertex_buffer(struct cntx *cntx)
 {
 	SDL_GPUDevice *device = cntx->device;
 	SDL_GPUTransferBuffer* transfer_buffer;
 
-	rot = (rot + 0.01f);
+	rot = (rot + 1); //% (360 * 100);
 	//vertices[0].rot = glm_rad(rot);
 	//vertices[1].rot = glm_rad(rot);
 	//vertices[2].rot = glm_rad(rot);
@@ -220,6 +220,8 @@ static bool create_pipeline(struct cntx *cntx)
 
 		.target_info.num_color_targets = SDL_arraysize(colorTargetDescriptions),
 		.target_info.color_target_descriptions = colorTargetDescriptions,
+
+		//.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE,
 	};
 
 	// create the pipeline
@@ -275,7 +277,7 @@ static void do_uniform_data(struct UniformBufferObject *ubo)
 	glm_ortho_default(480.0f/480.0f, ubo->projection);
 	//glm_perspective_default(, ubo.perspective);
 	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, ubo.view);
-	ubo->rot = rot;
+	ubo->rot = (float)rot / 100.0f;
 }
 
 SDL_AppResult SDL_AppIterate(void *appstate)
