@@ -1,8 +1,10 @@
 #include "SDL3/SDL_gpu.h"
 #include "SDL3/SDL_init.h"
 #include "SDL3/SDL_stdinc.h"
+#include "SDL3/SDL_timer.h"
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #define SDL_MAIN_USE_CALLBACKS
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL.h>
@@ -18,47 +20,21 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
-/// junk
 struct Vertex
 {
 	vec3 pos;
-//	vec4 rgba;
-
-//	float rot;
 };
 
 static SDL_GPUVertexAttribute vertexAttributes[] = {
-	VERTEX_ATTR_VEC3(0, offsetof(struct Vertex, pos)),
-//	VERTEX_ATTR_VEC4(1, offsetof(struct Vertex, rgba)),
-//	VERTEX_ATTR_FLOAT(2, offsetof(struct Vertex, rot)),
+	VERTEX_ATTR_VEC3(0, 0),
 };
-
-// a list of vertices
-static struct Vertex vertices[] =
-{
-	// top vertex
-	{
-		{0.0f, 0.5f, 0.0f},
-		//{1.0f, 0.0f, 0.0f, 1.0f},
-	},
-	// bottom left vertex
-	{
-		{-0.75f, -0.5f, 0.0f},
-		//{1.0f, 1.0f, 0.0f, 1.0f}
-	},
-	// bottom right vertex
-	{
-		{0.75f, -0.5f, 0.0f},
-		//{1.0f, 0.0f, 1.0f, 1.0f},
-	}
-};
-///
 
 struct UniformBufferObject
 {
 	mat4 projection;
 	mat4 view;
-	float rot;
+	mat4 model;
+	vec3 colour;
 };
 
 static SDL_GPUGraphicsPipeline* graphicsPipeline;
@@ -93,31 +69,6 @@ static bool load_model_cube(struct cntx *cntx)
 }
 
 int rot = 0;
-
-static void update_and_upload_vertex_buffer(struct cntx *cntx)
-{
-	SDL_GPUDevice *device = cntx->device;
-	SDL_GPUTransferBuffer* transfer_buffer;
-
-	rot = (rot + 1); //% (360 * 100);
-	//vertices[0].rot = glm_rad(rot);
-	//vertices[1].rot = glm_rad(rot);
-	//vertices[2].rot = glm_rad(rot);
-
-	if (!alloc_transfer_buffer(cntx, &transfer_buffer, sizeof(vertices)))
-		return;
-
-	update_transferbuffer(cntx, transfer_buffer, vertices, sizeof(vertices));
-
-	SDL_GPUCommandBuffer* command_buffer = SDL_AcquireGPUCommandBuffer(device);
-	SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(command_buffer);
-
-	upload_transferbuffer(copy_pass, cntx->vertexBuffer, transfer_buffer, sizeof(vertices));
-
-	SDL_EndGPUCopyPass(copy_pass);
-	SDL_SubmitGPUCommandBuffer(command_buffer);
-	SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
-}
 
 EMBEDDED_BIN(vertex_spv);
 static const void *vertex_spv = &_binary_vertex_spv_start;
@@ -249,9 +200,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	if (!SDL_ClaimWindowForGPUDevice(cntx->device, cntx->window))
 		return SDL_APP_FAILURE;
 
-	if (!alloc_vertex_buffer(cntx, &cntx->vertexBuffer,sizeof(vertices)))
-		return SDL_APP_FAILURE;
-
 	if (!load_vertex_shader(cntx))
 		return SDL_APP_FAILURE;
 
@@ -270,14 +218,23 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	return SDL_APP_CONTINUE;
 }
 
-static void do_uniform_data(struct UniformBufferObject *ubo)
+static void do_uniform_data(struct UniformBufferObject *ubo, float x, float r, float g, float b)
 {
 	//glm_mat4_mul(scale, rot, ubo.model);
 
 	glm_ortho_default(480.0f/480.0f, ubo->projection);
 	//glm_perspective_default(, ubo.perspective);
 	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, ubo.view);
-	ubo->rot = (float)rot / 100.0f;
+	rot = (rot + 1); //% (360 * 100);
+
+
+	glm_mat4_identity(ubo->model);
+	glm_translate_x(ubo->model, x);
+	vec3 axis = {0.0f, 1.0f, 1.0f};
+	glm_rotate(ubo->model, glm_rad(SDL_GetTicks() / 30.0f), axis);
+
+	vec3 colour = {r, g, b};
+	memcpy(&ubo->colour, colour, sizeof(ubo->colour));
 }
 
 SDL_AppResult SDL_AppIterate(void *appstate)
@@ -285,8 +242,6 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	struct cntx *cntx = &_cntx;
 	SDL_GPUDevice *device = cntx->device;
 	SDL_Window *window = cntx->window;
-
-	update_and_upload_vertex_buffer(cntx);
 
 	SDL_GPUTexture* swapchainTexture;
 	Uint32 width, height;
@@ -316,53 +271,37 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	SDL_GPURenderPass* renderpass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, NULL);
 	SDL_BindGPUGraphicsPipeline(renderpass, graphicsPipeline);
 
-	if (0) {
-		const SDL_GPUBufferBinding bufferBindings[] = {
-			{
-				.buffer = cntx->vertexBuffer,
-				.offset = 0,
-			},
-		};
-		SDL_BindGPUVertexBuffers(renderpass, 0, bufferBindings, SDL_arraysize(bufferBindings));
+	const SDL_GPUBufferBinding buffer_bindings0[] = {
+		{
+			.buffer = cntx->cube->vertex_buffer,
+			.offset = 0,
+		},
+	};
+		const SDL_GPUBufferBinding buffer_bindings1[] = {
+		{
+			.buffer = cntx->cube->index_buffer,
+			.offset = 0,
+		},
+	};
+	SDL_BindGPUVertexBuffers(renderpass, 0, buffer_bindings0, SDL_arraysize(buffer_bindings0));
+	SDL_BindGPUIndexBuffer(renderpass, buffer_bindings1, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+	//SDL_DrawGPUPrimitives(renderpass, 3, 1, 0, 0);
 
-		struct UniformBufferObject ubo = {};
-		do_uniform_data(&ubo);
-		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+	struct UniformBufferObject ubo = {};
+	do_uniform_data(&ubo, -0.5, 1.0f, 0, 0);
 
-		// issue a draw call
-		SDL_DrawGPUPrimitives(renderpass, 3, 1, 0, 0);
+	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
-		SDL_EndGPURenderPass(renderpass);
+	do_uniform_data(&ubo, 0.0, 0, 1.0f, 0);
+	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
-		//SDL_SubmitGPUCommandBuffer(commandBuffer);
-	}
+	do_uniform_data(&ubo, 0.5, 0, 0, 1.0f);
+	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
-	if (1){
-		const SDL_GPUBufferBinding buffer_bindings0[] = {
-			{
-				.buffer = cntx->cube->vertex_buffer,
-				.offset = 0,
-			},
-		};
-			const SDL_GPUBufferBinding buffer_bindings1[] = {
-			{
-				.buffer = cntx->cube->index_buffer,
-				.offset = 0,
-			},
-		};
-		SDL_BindGPUVertexBuffers(renderpass, 0, buffer_bindings0, SDL_arraysize(buffer_bindings0));
-		SDL_BindGPUIndexBuffer(renderpass, buffer_bindings1, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-		//SDL_DrawGPUPrimitives(renderpass, 3, 1, 0, 0);
-
-		struct UniformBufferObject ubo = {};
-		do_uniform_data(&ubo);
-		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
-
-		SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
-
-		SDL_EndGPURenderPass(renderpass);
-
-	}
+	SDL_EndGPURenderPass(renderpass);
 
 	SDL_SubmitGPUCommandBuffer(commandBuffer);
 
