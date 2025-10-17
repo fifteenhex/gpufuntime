@@ -218,7 +218,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	return SDL_APP_CONTINUE;
 }
 
-static void do_uniform_data(struct UniformBufferObject *ubo, float x, float r, float g, float b)
+static void do_uniform_data(struct UniformBufferObject *ubo,
+							float x, float y,
+							float r, float g, float b)
 {
 	//glm_mat4_mul(scale, rot, ubo.model);
 
@@ -227,11 +229,15 @@ static void do_uniform_data(struct UniformBufferObject *ubo, float x, float r, f
 	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, ubo.view);
 	rot = (rot + 1); //% (360 * 100);
 
+	unsigned long ticks = SDL_GetTicks();
 
 	glm_mat4_identity(ubo->model);
-	glm_translate_x(ubo->model, x);
+	glm_translate_x(ubo->model, x * sin(glm_rad(ticks / 10)));
+	glm_translate_y(ubo->model, y * cos(glm_rad(ticks/ 10)));
 	vec3 axis = {0.0f, 1.0f, 1.0f};
-	glm_rotate(ubo->model, glm_rad(SDL_GetTicks() / 30.0f), axis);
+	glm_rotate(ubo->model, glm_rad(ticks / 40.0f), axis);
+	vec3 scale = {.8f, .8f, .8f};
+	glm_scale(ubo->model, scale);
 
 	vec3 colour = {r, g, b};
 	memcpy(&ubo->colour, colour, sizeof(ubo->colour));
@@ -288,16 +294,16 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	//SDL_DrawGPUPrimitives(renderpass, 3, 1, 0, 0);
 
 	struct UniformBufferObject ubo = {};
-	do_uniform_data(&ubo, -0.5, 1.0f, 0, 0);
+	do_uniform_data(&ubo, -0.5, -0.5f, 1.0f, 0, 0);
 
 	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
-	do_uniform_data(&ubo, 0.0, 0, 1.0f, 0);
+	do_uniform_data(&ubo, 0.0, 0.0, 0, 1.0f, 0);
 	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
-	do_uniform_data(&ubo, 0.5, 0, 0, 1.0f);
+	do_uniform_data(&ubo, 0.5, 0.5f, 0, 0, 1.0f);
 	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
