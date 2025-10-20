@@ -1,5 +1,7 @@
+#include "SDL3/SDL_events.h"
 #include "SDL3/SDL_gpu.h"
 #include "SDL3/SDL_init.h"
+#include "SDL3/SDL_scancode.h"
 #include "SDL3/SDL_stdinc.h"
 #include "SDL3/SDL_timer.h"
 #include <stddef.h>
@@ -218,26 +220,41 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	return SDL_APP_CONTINUE;
 }
 
+float eye_y = 0.0f;
+float eye_x = 0.0f;
+float eye_z = -5.0f;
+
 static void do_uniform_data(struct UniformBufferObject *ubo,
-							float x, float y,
+							float x, float y, float z,
 							float r, float g, float b)
 {
 	//glm_mat4_mul(scale, rot, ubo.model);
 
-	glm_ortho_default(480.0f/480.0f, ubo->projection);
-	//glm_perspective_default(, ubo.perspective);
-	//glm_look(CamPos, (vec3) { 0, 0, 0 },  (vec3){ 0, 1, 0 }, ubo.view);
+	//glm_ortho_default(480.0f/480.0f, ubo->projection);
+	glm_perspective_default(480.0f/480.0f, ubo->projection);
+	glm_look_anyup((vec3){0, 0, eye_z}, (vec3){0.0f,0.0f,0.1f}, ubo->view);
+	{
+		vec3 axis = {1.0f, 0.0f, 0.0f};
+		glm_rotate(ubo->view, eye_y, axis);
+	}
+	{
+		vec3 axis = {0.0f, 1.0f, 0.0f};
+		glm_rotate(ubo->view, eye_x, axis);
+	}
 	rot = (rot + 1); //% (360 * 100);
 
 	unsigned long ticks = SDL_GetTicks();
 
 	glm_mat4_identity(ubo->model);
 	glm_translate_x(ubo->model, x * sin(glm_rad(ticks / 10)));
-	glm_translate_y(ubo->model, y * cos(glm_rad(ticks/ 10)));
-	vec3 axis = {0.0f, 1.0f, 1.0f};
-	glm_rotate(ubo->model, glm_rad(ticks / 40.0f), axis);
-	vec3 scale = {.8f, .8f, .8f};
-	glm_scale(ubo->model, scale);
+	//glm_translate_y(ubo->model, y * cos(glm_rad(ticks/ 10)));
+	glm_translate_z(ubo->model, z * cos(glm_rad(ticks/ 10)));
+	{
+		vec3 axis = {0.0f, 1.0f, 1.0f};
+		glm_rotate(ubo->model, glm_rad(ticks / 20.0f), axis);
+	}
+	//vec3 scale = {.8f, .8f, .8f};
+	//glm_scale(ubo->model, scale);
 
 	vec3 colour = {r, g, b};
 	memcpy(&ubo->colour, colour, sizeof(ubo->colour));
@@ -294,16 +311,15 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	//SDL_DrawGPUPrimitives(renderpass, 3, 1, 0, 0);
 
 	struct UniformBufferObject ubo = {};
-	do_uniform_data(&ubo, -0.5, -0.5f, 1.0f, 0, 0);
-
+	do_uniform_data(&ubo, -.75, -.75f, -3.0f, 1.0f, 0, 0);
 	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
-	do_uniform_data(&ubo, 0.0, 0.0, 0, 1.0f, 0);
-	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
-	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
+	//do_uniform_data(&ubo, 0.0, 0.0f, 5.0f, 0, 1.0f, 0);
+	//SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+	//SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
-	do_uniform_data(&ubo, 0.5, 0.5f, 0, 0, 1.0f);
+	do_uniform_data(&ubo, .75f, .75f, 3.0f, 0, 0, 1.0f);
 	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
@@ -319,6 +335,32 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 	switch(event->type) {
 		case SDL_EVENT_QUIT:
 			return SDL_APP_SUCCESS;
+		case SDL_EVENT_KEY_DOWN:
+			switch(event->key.scancode) {
+				case SDL_SCANCODE_DOWN:
+					eye_y += 0.05f;
+					break;
+				case SDL_SCANCODE_UP:
+					eye_y += -0.05f;
+					break;
+				case SDL_SCANCODE_LEFT:
+					eye_x += 0.05f;
+					break;
+				case SDL_SCANCODE_RIGHT:
+					eye_x += -0.05f;
+					break;
+				case SDL_SCANCODE_Z:
+					eye_z += -0.2f;
+					break;
+				case SDL_SCANCODE_X:
+					eye_z += 0.2f;
+					break;
+				default:
+					break;
+			}
+			break;
+		default:
+			break;
 	}
 
 	return SDL_APP_CONTINUE;
