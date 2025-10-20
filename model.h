@@ -13,6 +13,7 @@ struct model {
 
 	off_t vertices, indices;
 	size_t vertices_sz, indices_sz;
+	unsigned indices_num;
 	SDL_GPUBuffer* vertex_buffer;
 	SDL_GPUBuffer* index_buffer;
 };
@@ -24,11 +25,15 @@ static inline void model_get_vertices(cgltf_data *model, off_t *off, size_t *sz)
 	*off = model->buffer_views[0].offset;
 }
 
-static inline void model_get_indices(cgltf_data *model, off_t *off, size_t *sz)
+static inline void model_get_indices(cgltf_data *model,
+									 off_t *off,
+									 size_t *sz,
+									 unsigned int *num)
 {
 	// todo: mm
 	*sz = model->buffer_views[1].size;
 	*off = model->buffer_views[1].offset;
+	*num = model->buffer_views[1].size / 4;
 }
 
 static inline bool upload_model(struct cntx *cntx, struct model *model)

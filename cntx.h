@@ -15,6 +15,6 @@ static struct cntx {
 
 	SDL_GPUBuffer* vertexBuffer;
 
-	struct model *cube;
+	struct model *cube, *donut;
 } _cntx;
 #endif

@@ -62,11 +62,40 @@ static bool load_model_cube(struct cntx *cntx)
 	if (!alloc_vertex_buffer(cntx, &model->vertex_buffer, model->vertices_sz))
 		return false;
 
-	model_get_indices(model->cube, &model->indices, &model->indices_sz);
+	model_get_indices(model->cube, &model->indices, &model->indices_sz, &model->indices_num);
 	if (!alloc_index_buffer(cntx, &model->index_buffer, model->indices_sz))
 		return false;
 
 	cntx->cube = model;
+	return true;
+}
+
+EMBEDDED_BIN(models_donut_glb);
+static const void *donut_glb = &_binary_models_donut_glb_start;
+static const void *donut_glb_end = &_binary_models_donut_glb_end;
+
+static bool load_model_donut(struct cntx *cntx)
+{
+	struct model *model = malloc(sizeof(*model));
+	size_t sz = donut_glb_end - donut_glb;
+	cgltf_options options = {0};
+
+	if (!model)
+		return false;
+
+	cgltf_result result = cgltf_parse(&options, donut_glb, sz, &model->cube);
+	if (result != cgltf_result_success)
+		return false;
+
+	model_get_vertices(model->cube, &model->vertices, &model->vertices_sz);
+	if (!alloc_vertex_buffer(cntx, &model->vertex_buffer, model->vertices_sz))
+		return false;
+
+	model_get_indices(model->cube, &model->indices, &model->indices_sz, &model->indices_num);
+	if (!alloc_index_buffer(cntx, &model->index_buffer, model->indices_sz))
+		return false;
+
+	cntx->donut = model;
 	return true;
 }
 
@@ -214,7 +243,13 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	if (!load_model_cube(cntx))
 		return SDL_APP_FAILURE;
 
+	if (!load_model_donut(cntx))
+		return SDL_APP_FAILURE;
+
 	if (!upload_model(cntx, cntx->cube))
+		return SDL_APP_FAILURE;
+
+	if (!upload_model(cntx, cntx->donut))
 		return SDL_APP_FAILURE;
 
 	return SDL_APP_CONTINUE;
@@ -294,34 +329,54 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	SDL_GPURenderPass* renderpass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, NULL);
 	SDL_BindGPUGraphicsPipeline(renderpass, graphicsPipeline);
 
-	const SDL_GPUBufferBinding buffer_bindings0[] = {
-		{
-			.buffer = cntx->cube->vertex_buffer,
-			.offset = 0,
-		},
-	};
-		const SDL_GPUBufferBinding buffer_bindings1[] = {
-		{
-			.buffer = cntx->cube->index_buffer,
-			.offset = 0,
-		},
-	};
-	SDL_BindGPUVertexBuffers(renderpass, 0, buffer_bindings0, SDL_arraysize(buffer_bindings0));
-	SDL_BindGPUIndexBuffer(renderpass, buffer_bindings1, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-	//SDL_DrawGPUPrimitives(renderpass, 3, 1, 0, 0);
-
 	struct UniformBufferObject ubo = {};
-	do_uniform_data(&ubo, -.75, -.75f, -3.0f, 1.0f, 0, 0);
-	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
-	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
 
-	//do_uniform_data(&ubo, 0.0, 0.0f, 5.0f, 0, 1.0f, 0);
-	//SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
-	//SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
+	{
+		const SDL_GPUBufferBinding buffer_bindings0[] = {
+			{
+				.buffer = cntx->cube->vertex_buffer,
+				.offset = 0,
+			},
+		};
+			const SDL_GPUBufferBinding buffer_bindings1[] = {
+			{
+				.buffer = cntx->cube->index_buffer,
+				.offset = 0,
+			},
+		};
+		SDL_BindGPUVertexBuffers(renderpass, 0, buffer_bindings0, SDL_arraysize(buffer_bindings0));
+		SDL_BindGPUIndexBuffer(renderpass, buffer_bindings1, SDL_GPU_INDEXELEMENTSIZE_32BIT);
 
-	do_uniform_data(&ubo, .75f, .75f, 3.0f, 0, 0, 1.0f);
-	SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
-	SDL_DrawGPUIndexedPrimitives(renderpass, 36, 1, 0, 0, 0);
+
+		do_uniform_data(&ubo, -.75, -.75f, -3.0f, 1.0f, 0, 0);
+		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+		SDL_DrawGPUIndexedPrimitives(renderpass, cntx->cube->indices_num, 1, 0, 0, 0);
+
+		do_uniform_data(&ubo, .75f, .75f, 3.0f, 0, 0, 1.0f);
+		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+		SDL_DrawGPUIndexedPrimitives(renderpass, cntx->cube->indices_num, 1, 0, 0, 0);
+	}
+
+	{
+		const SDL_GPUBufferBinding buffer_bindings0[] = {
+			{
+				.buffer = cntx->donut->vertex_buffer,
+				.offset = 0,
+			},
+		};
+		const SDL_GPUBufferBinding buffer_bindings1[] = {
+			{
+				.buffer = cntx->donut->index_buffer,
+				.offset = 0,
+			},
+		};
+		SDL_BindGPUVertexBuffers(renderpass, 0, buffer_bindings0, SDL_arraysize(buffer_bindings0));
+		SDL_BindGPUIndexBuffer(renderpass, buffer_bindings1, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+		do_uniform_data(&ubo, 0.0, 0.0f, 0.0f, 0, 1.0f, 0);
+		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+		SDL_DrawGPUIndexedPrimitives(renderpass, cntx->donut->indices_num, 1, 0, 0, 0);
+	}
+
 
 	SDL_EndGPURenderPass(renderpass);
 
@@ -373,6 +428,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	SDL_Window *window = cntx->window;
 
 	model_free(cntx, cntx->cube);
+	model_free(cntx, cntx->donut);
 
 	SDL_ReleaseGPUBuffer(device, cntx->vertexBuffer);
 	SDL_ReleaseGPUShader(device, cntx->vertexShader);

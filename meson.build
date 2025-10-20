@@ -38,7 +38,7 @@ fragment_o = custom_target('shader_fragment_o',
   command: objcopy_bin_to_o,
 )
 
-srcs = ['gpufuntime', 'gpufuntime.c', vertex_o, fragment_o, mdl_cube_o]
+srcs = ['gpufuntime', 'gpufuntime.c', vertex_o, fragment_o, mdl_cube_o, mdl_donut_o]
 
 executable(srcs,
            dependencies: [sdl3_dep, cglm_dep],
