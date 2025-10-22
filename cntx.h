@@ -16,5 +16,7 @@ static struct cntx {
 	SDL_GPUBuffer* vertexBuffer;
 
 	struct model *cube, *donut;
+
+	SDL_GPUTexture *depth_texture;
 } _cntx;
 #endif

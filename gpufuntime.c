@@ -41,20 +41,19 @@ struct UniformBufferObject
 
 static SDL_GPUGraphicsPipeline* graphicsPipeline;
 
-EMBEDDED_BIN(models_cube_glb);
-static const void *cube_glb = &_binary_models_cube_glb_start;
-static const void *cube_glb_end = &_binary_models_cube_glb_end;
-
-static bool load_model_cube(struct cntx *cntx)
+static bool load_model(struct cntx *cntx,
+					   struct model **_model,
+					   const void *start,
+					   const void *end)
 {
 	struct model *model = malloc(sizeof(*model));
-	size_t sz = cube_glb_end - cube_glb;
+	size_t sz = end - start;
 	cgltf_options options = {0};
 
 	if (!model)
 		return false;
 
-	cgltf_result result = cgltf_parse(&options, cube_glb, sz, &model->cube);
+	cgltf_result result = cgltf_parse(&options, start, sz, &model->cube);
 	if (result != cgltf_result_success)
 		return false;
 
@@ -66,8 +65,17 @@ static bool load_model_cube(struct cntx *cntx)
 	if (!alloc_index_buffer(cntx, &model->index_buffer, model->indices_sz))
 		return false;
 
-	cntx->cube = model;
+	*_model = model;
 	return true;
+}
+
+EMBEDDED_BIN(models_cube_glb);
+static const void *cube_glb = &_binary_models_cube_glb_start;
+static const void *cube_glb_end = &_binary_models_cube_glb_end;
+
+static bool load_model_cube(struct cntx *cntx)
+{
+	return load_model(cntx, &cntx->cube, cube_glb, cube_glb_end);
 }
 
 EMBEDDED_BIN(models_donut_glb);
@@ -76,27 +84,7 @@ static const void *donut_glb_end = &_binary_models_donut_glb_end;
 
 static bool load_model_donut(struct cntx *cntx)
 {
-	struct model *model = malloc(sizeof(*model));
-	size_t sz = donut_glb_end - donut_glb;
-	cgltf_options options = {0};
-
-	if (!model)
-		return false;
-
-	cgltf_result result = cgltf_parse(&options, donut_glb, sz, &model->cube);
-	if (result != cgltf_result_success)
-		return false;
-
-	model_get_vertices(model->cube, &model->vertices, &model->vertices_sz);
-	if (!alloc_vertex_buffer(cntx, &model->vertex_buffer, model->vertices_sz))
-		return false;
-
-	model_get_indices(model->cube, &model->indices, &model->indices_sz, &model->indices_num);
-	if (!alloc_index_buffer(cntx, &model->index_buffer, model->indices_sz))
-		return false;
-
-	cntx->donut = model;
-	return true;
+	return load_model(cntx, &cntx->donut, donut_glb, donut_glb_end);
 }
 
 int rot = 0;
@@ -157,6 +145,20 @@ static bool load_fragment_shader(struct cntx *cntx)
 	return true;
 }
 
+void setup_depth_buffer(struct cntx *cntx)
+{
+	const SDL_GPUTextureCreateInfo textureinfo = {
+		.format = SDL_GPU_TEXTUREFORMAT_D24_UNORM,
+		.usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+		.width = 480,
+		.height = 480,
+		.layer_count_or_depth = 1,
+		.num_levels = 1
+	};
+
+	cntx->depth_texture = SDL_CreateGPUTexture(cntx->device, &textureinfo);
+}
+
 static bool create_pipeline(struct cntx *cntx)
 {
 	SDL_GPUDevice *device = cntx->device;
@@ -203,7 +205,16 @@ static bool create_pipeline(struct cntx *cntx)
 		.target_info.num_color_targets = SDL_arraysize(colorTargetDescriptions),
 		.target_info.color_target_descriptions = colorTargetDescriptions,
 
+		.target_info.has_depth_stencil_target = true,
+		.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D24_UNORM,
+
 		//.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE,
+
+		.depth_stencil_state = {
+			.enable_depth_test = true,
+			.enable_depth_write = true,
+			.compare_op = SDL_GPU_COMPAREOP_LESS,
+		},
 	};
 
 	// create the pipeline
@@ -252,6 +263,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	if (!upload_model(cntx, cntx->donut))
 		return SDL_APP_FAILURE;
 
+	setup_depth_buffer(cntx);
+
 	return SDL_APP_CONTINUE;
 }
 
@@ -295,6 +308,24 @@ static void do_uniform_data(struct UniformBufferObject *ubo,
 	memcpy(&ubo->colour, colour, sizeof(ubo->colour));
 }
 
+void draw_cube(struct cntx *cntx, SDL_GPURenderPass *renderpass)
+{
+	const SDL_GPUBufferBinding buffer_bindings0[] = {
+		{
+			.buffer = cntx->cube->vertex_buffer,
+			.offset = 0,
+		},
+	};
+		const SDL_GPUBufferBinding buffer_bindings1[] = {
+		{
+			.buffer = cntx->cube->index_buffer,
+			.offset = 0,
+		},
+	};
+	SDL_BindGPUVertexBuffers(renderpass, 0, buffer_bindings0, SDL_arraysize(buffer_bindings0));
+	SDL_BindGPUIndexBuffer(renderpass, buffer_bindings1, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+}
+
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
 	struct cntx *cntx = &_cntx;
@@ -326,33 +357,20 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		.texture = swapchainTexture,
 	};
 
-	SDL_GPURenderPass* renderpass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, NULL);
+	const SDL_GPUDepthStencilTargetInfo depth_target = {
+		.texture = cntx->depth_texture,
+		.clear_depth = 1.0f,
+		.load_op = SDL_GPU_LOADOP_CLEAR,
+	};
+
+	SDL_GPURenderPass* renderpass = SDL_BeginGPURenderPass(commandBuffer, &colorTargetInfo, 1, &depth_target);
 	SDL_BindGPUGraphicsPipeline(renderpass, graphicsPipeline);
 
 	struct UniformBufferObject ubo = {};
 
 	{
-		const SDL_GPUBufferBinding buffer_bindings0[] = {
-			{
-				.buffer = cntx->cube->vertex_buffer,
-				.offset = 0,
-			},
-		};
-			const SDL_GPUBufferBinding buffer_bindings1[] = {
-			{
-				.buffer = cntx->cube->index_buffer,
-				.offset = 0,
-			},
-		};
-		SDL_BindGPUVertexBuffers(renderpass, 0, buffer_bindings0, SDL_arraysize(buffer_bindings0));
-		SDL_BindGPUIndexBuffer(renderpass, buffer_bindings1, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-
-
+		draw_cube(cntx, renderpass);
 		do_uniform_data(&ubo, -.75, -.75f, -3.0f, 1.0f, 0, 0);
-		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
-		SDL_DrawGPUIndexedPrimitives(renderpass, cntx->cube->indices_num, 1, 0, 0, 0);
-
-		do_uniform_data(&ubo, .75f, .75f, 3.0f, 0, 0, 1.0f);
 		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
 		SDL_DrawGPUIndexedPrimitives(renderpass, cntx->cube->indices_num, 1, 0, 0, 0);
 	}
@@ -377,6 +395,12 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		SDL_DrawGPUIndexedPrimitives(renderpass, cntx->donut->indices_num, 1, 0, 0, 0);
 	}
 
+	{
+		draw_cube(cntx, renderpass);
+		do_uniform_data(&ubo, .75f, .75f, 3.0f, 0, 0, 1.0f);
+		SDL_PushGPUVertexUniformData(commandBuffer, 0, &ubo, sizeof(ubo));
+		SDL_DrawGPUIndexedPrimitives(renderpass, cntx->cube->indices_num, 1, 0, 0, 0);
+	}
 
 	SDL_EndGPURenderPass(renderpass);
 
